@@ -18,7 +18,8 @@
   },
   "files": [
     "src",
-    "lib"
+    "lib",
+    "cordis.patch.yml"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -27,6 +28,7 @@
   "keywords": [
     "deepseek-harness",
     "dsh",
+    "dsh-plugin",
     "cordis",
     "plugin",
     "tools",
@@ -35,7 +37,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-org>/dsh-tool-visibility.git"
+    "url": "git+https://github.com/rayfalling/dsh-tool-visibility.git"
+  },
+  "homepage": "https://github.com/rayfalling/dsh-tool-visibility#readme",
+  "bugs": {
+    "url": "https://github.com/rayfalling/dsh-tool-visibility/issues"
   },
   "dsh": {
     "client": {
@@ -45,6 +51,9 @@
         "@deepseek-ai/dsh-client-ui-slots"
       ],
       "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "peerDependencies": {
@@ -52,9 +61,9 @@
     "@deepseek-ai/dsh-client-connection": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-client-runtime": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-scope": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-scope": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0"
   },

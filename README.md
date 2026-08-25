@@ -70,11 +70,42 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
 ## 开发 / 发布
 
 标准 cordis 插件包（ESM，命名导出 `name` / `inject` / `Config` / `apply`；client 半区
-`src/client.js` + `dsh.client` 字段）。发布路径：
+`src/client.js` + `dsh.client` 字段；组合包 manifest `dsh.bundle` + `cordis.patch.yml`）。
 
-1. 推送到 GitHub 仓库（`repository` 字段已预留）。
-2. `npm publish --access public`（Store 安装依赖 npm 包）。
-3. 向 DSH 插件市场（[DshMarketPlace/dsh-plugins-store](https://github.com/DshMarketPlace/dsh-plugins-store)，API: `api.dshmk.com`）提交仓库，等待实机验证。
+### 发布到 npm（官方流程，见 [deepseek-harness/docs/user/develop/basic/publish.zh.md](https://github.com/deepseek-ai/DeepSeek-Harness/blob/master/docs/user/develop/basic/publish.zh.md)）
+
+1. **登录 npm**（本机当前未登录）：
+   ```sh
+   npm login        # 或 npm adduser；需要 npm 账号与 2FA
+   npm whoami       # 确认登录成功
+   ```
+2. **构建 client bundle**（Web 半区需按 dsh 构建管线产出 `lib/client.js`；
+   独立 `npm run bundle` 是起点，`__ModuleLoader__` 格式需 harness 仓库工具链验证）：
+   ```sh
+   npm run bundle
+   ```
+3. **打包校验**：`npm pack --dry-run` 检查 `files` 包含 `src/`、`lib/`、`cordis.patch.yml`。
+4. **发布**：
+   ```sh
+   npm publish --access public
+   ```
+5. **安装验证**（本地 profile）：
+   ```sh
+   dsh plugin --profile <name> add dsh-tool-visibility
+   dsh --profile <name> --dump-config   # 应看到 "# == dsh-tool-visibility" 层
+   ```
+   注：`dsh.bundle` patch 把行插到**根组合**（host 层），`restrict` 不可用会自动降级
+   waterfall；要完整 per-scope 语义，把行加入 **agent preset 副本**。
+
+### 分发到 DSH 插件市场
+
+向 [DshMarketPlace/dsh-plugins-store](https://github.com/DshMarketPlace/dsh-plugins-store)
+（API: `api.dshmk.com`）提交 GitHub 仓库，等待实机验证。仓库已带 topics：
+`dsh` / `deepseek-harness` / `cordis` / `plugin` / `dsh-plugin`。
+
+### GitHub
+
+仓库：<https://github.com/rayfalling/dsh-tool-visibility>（public，含 topics）。
 
 ## License
 
