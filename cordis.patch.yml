@@ -7,7 +7,7 @@
 # For full per-scope semantics (restrict + UNKNOWN_TOOL), add the row to an
 # agent preset copy instead (editing-cordis-compositions workflow):
 #   - id: tool-visibility
-#     name: dsh-tool-visibility
+#     name: '@rayfalling/dsh-tool-visibility'
 - insert:
     - id: tool-visibility
-      name: dsh-tool-visibility
+      name: '@rayfalling/dsh-tool-visibility'

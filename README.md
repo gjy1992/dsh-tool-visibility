@@ -27,8 +27,9 @@
 ## 表面（Surface）
 
 - **浏览器设置页**：Settings → 工具注入控制。列出全部工具（可见 ∪ 已隐藏，隐藏的也能恢复），
-  复选框逐工具开关；顶部有 刷新 / 全部恢复；显示状态文件路径与当前生效的过滤机制。
-  Client↔Host 走 Connection RPC 通道 `/tool-visibility`（endpoints: `list` / `set` / `reset`）。
+  复选框逐工具开关；按名称前缀分组、支持搜索与整组批量开关；顶部有 刷新 / 全部恢复；
+  显示状态文件路径与当前生效的过滤机制。
+  Client↔Host 走 Connection RPC 通道 `/tool-visibility`（endpoints: `list` / `set` / `set-group` / `reset`）。
 - **模型工具** `tool_visibility`：`list` / `hide` / `show` / `reset`。
 
 ## 安装 / 挂载
@@ -36,9 +37,9 @@
 作为 agent preset 的一行（推荐，获得 per-scope 过滤 + 设置页 UI）：
 
 ```yaml
-# 在 <preset>/agent.cordis.yml 中追加（需先 npm 安装或从 Store 安装本包）
+# 在 <preset>/agent.cordis.yml 中追加（需先安装本包：dsh plugin add @rayfalling/dsh-tool-visibility）
 - id: tool-visibility
-  name: 'dsh-tool-visibility'
+  name: '@rayfalling/dsh-tool-visibility'
 ```
 
 Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.client` 字段 +
@@ -57,7 +58,7 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
 
 ```yaml
 - id: tool-visibility
-  name: 'dsh-tool-visibility'
+  name: '@rayfalling/dsh-tool-visibility'
   config:
     stateFile: 'F:/my/state.json'
 ```
@@ -74,9 +75,9 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
 
 ### 发布到 npm（官方流程，见 [deepseek-harness/docs/user/develop/basic/publish.zh.md](https://github.com/deepseek-ai/DeepSeek-Harness/blob/master/docs/user/develop/basic/publish.zh.md)）
 
-1. **登录 npm**（本机当前未登录）：
+1. **登录 npm**（需 npm 账号与 2FA）：
    ```sh
-   npm login        # 或 npm adduser；需要 npm 账号与 2FA
+   npm login        # 或 npm adduser
    npm whoami       # 确认登录成功
    ```
 2. **构建 client bundle**（Web 半区需按 dsh 构建管线产出 `lib/client.js`；
@@ -85,14 +86,15 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
    npm run bundle
    ```
 3. **打包校验**：`npm pack --dry-run` 检查 `files` 包含 `src/`、`lib/`、`cordis.patch.yml`。
-4. **发布**：
+4. **发布**（scoped 包，`publishConfig.access: public` 已声明）：
    ```sh
    npm publish --access public
    ```
+   注：2FA 开启时发布会触发一次性口令/网页认证，需在可交互终端完成。
 5. **安装验证**（本地 profile）：
    ```sh
-   dsh plugin --profile <name> add dsh-tool-visibility
-   dsh --profile <name> --dump-config   # 应看到 "# == dsh-tool-visibility" 层
+   dsh plugin --profile <name> add @rayfalling/dsh-tool-visibility
+   dsh --profile <name> --dump-config   # 应看到 "# == @rayfalling/dsh-tool-visibility" 层
    ```
    注：`dsh.bundle` patch 把行插到**根组合**（host 层），`restrict` 不可用会自动降级
    waterfall；要完整 per-scope 语义，把行加入 **agent preset 副本**。
