@@ -1,6 +1,6 @@
 {
   "name": "@rayfalling/dsh-tool-visibility",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Control which tool schemas are injected into the DeepSeek Harness model context. Registers a tool_visibility manager tool AND a settings-page UI (Settings → 工具注入控制) with per-tool toggles; backed by the framework-native tools.restrict filter and persisted to a JSON state file.",
   "type": "module",
   "main": "src/index.js",
