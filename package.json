@@ -1,6 +1,6 @@
 {
   "name": "@rayfalling/dsh-tool-visibility",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Control which tool schemas are injected into the DeepSeek Harness model context. Registers a tool_visibility manager tool AND a settings-page UI (Settings → 工具注入控制) with per-tool toggles; backed by the framework-native tools.restrict filter and persisted to a JSON state file.",
   "type": "module",
   "main": "src/index.js",
@@ -64,8 +64,30 @@
     "@deepseek-ai/dsh-scope": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.1",
     "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-runtime": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-scope": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-system-prompt": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "scripts": {
     "bundle": "tsdown",

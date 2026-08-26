@@ -1,12 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis';
-import type { Schema } from '@deepseek-ai/schemastery';
 
-/** Plugin config: `stateFile` overrides the default $DSH_HOME/tool-visibility.json. */
+/** Plugin config (optional; the host entry performs no static @deepseek-ai imports). */
 export interface Config {
+  /** Absolute path of the JSON state file. Default: $DSH_HOME/tool-visibility.json. */
   stateFile?: string;
 }
 
 export const name: 'dsh-tool-visibility';
 export const inject: ['tools'];
-export const Config: Schema<Config>;
-export function apply(ctx: Context, config: Config): Promise<void>;
+export function apply(ctx: Context, config?: Partial<Config>): Promise<void>;

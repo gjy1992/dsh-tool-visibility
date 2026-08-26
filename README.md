@@ -65,8 +65,9 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
 
 ## 开发
 
-标准 cordis 插件包（ESM，命名导出 `name` / `inject` / `Config` / `apply`；client 半区
-`src/client.js` + `dsh.client` 字段；组合包 manifest `dsh.bundle` + `cordis.patch.yml`）。
+标准 cordis 插件包（ESM，命名导出 `name` / `inject` / `apply`；client 半区
+`src/client.js` + `dsh.client` 字段；组合包 manifest `dsh.bundle` + `cordis.patch.yml`；
+host 入口零静态 `@deepseek-ai/*` import，可在任意 profile 直接安装）。
 本地安装验证：
 
 ```sh

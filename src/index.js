@@ -20,6 +20,15 @@
  *    `/tool-visibility` Connection RPC channel (list / set / set-group / reset),
  *    grouped by raw tool-name prefix, with search and whole-group toggles.
  *
+ * Dependency policy: this host entry performs NO static `@deepseek-ai/*`
+ * imports. The runtime provides everything through injected services
+ * (`ctx.tools`, `ctx.systemPrompt`, `ctx.connection`), so the package loads in
+ * any profile where the dsh runtime itself runs — third-party bundles cannot
+ * rely on `@deepseek-ai/*` resolving from the profile's node_modules (built-ins
+ * resolve only from the dsh install). `@deepseek-ai/dsh-scope` is loaded
+ * dynamically as an optional upgrade for scope-aware tool views and degrades
+ * to the global registry view when absent.
+ *
  * Persistence: the hidden set (plus a description cache for hidden tools) is
  * loaded on start and written on every change to `$DSH_HOME/tool-visibility.json`
  * (override with the `stateFile` config).
@@ -27,18 +36,10 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { defineTool } from '@deepseek-ai/dsh-tools';
-import { scopeOf } from '@deepseek-ai/dsh-scope';
-import z from '@deepseek-ai/schemastery';
 
 export const name = 'dsh-tool-visibility';
 
 export const inject = ['tools'];
-
-export const Config = z.object({
-  /** Absolute path of the JSON state file. Default: $DSH_HOME/tool-visibility.json. */
-  stateFile: z.string().default(''),
-});
 
 const MANAGER_TOOL = 'tool_visibility';
 const RPC_CHANNEL = '/tool-visibility';
@@ -59,14 +60,33 @@ function groupFor(name) {
   return i === -1 ? name : name.slice(0, i);
 }
 
-export async function apply(ctx, config) {
-  const stateFile = config.stateFile || defaultStateFile();
+export async function apply(ctx, config = {}) {
+  const stateFile = (config && typeof config.stateFile === 'string' && config.stateFile) || defaultStateFile();
   const hidden = new Set();
   /** Tool-name → description cache, kept for hidden tools so the UI can show them. */
   const descriptions = new Map();
   /** 'restrict' | 'waterfall' | 'none' — which filter actually applies. */
   let filterMode = 'none';
   let lift = null; // disposer of the active registry restriction
+
+  // Optional scope support: `@deepseek-ai/dsh-scope` is a dsh-install built-in,
+  // present when the runtime loads our package from the same tree, but not
+  // guaranteed for registry installs in foreign profiles. Absent → global view.
+  let scopeOf = null;
+  try {
+    scopeOf = (await import('@deepseek-ai/dsh-scope')).scopeOf;
+  } catch {
+    scopeOf = null;
+  }
+  const scopeFor = (exec) => {
+    if (!scopeOf) return undefined;
+    try {
+      if (exec && exec.agent) return scopeOf(exec.agent.ctx);
+      return scopeOf(ctx);
+    } catch {
+      return undefined;
+    }
+  };
 
   // ── persistence ────────────────────────────────────────────────────────────
   async function load() {
@@ -145,9 +165,7 @@ export async function apply(ctx, config) {
 
   // ── shared state helpers ───────────────────────────────────────────────────
   /** Current schemas one scope's model sees (post-restriction). */
-  const visibleSchemas = (exec) => ctx.tools.schemas(
-    exec && exec.agent ? scopeOf(exec.agent.ctx) : scopeOf(ctx),
-  );
+  const visibleSchemas = (exec) => ctx.tools.schemas(scopeFor(exec));
 
   /**
    * Complete tool catalog for the UI: visible schemas ∪ hidden names.
@@ -251,25 +269,29 @@ export async function apply(ctx, config) {
     }, { authority: 'loopback' });
   }
 
-  // ── model-facing manager tool ──────────────────────────────────────────────
-  ctx.tools.register(defineTool({
+  // ── model-facing manager tool (hand-rolled definition: no dsh-tools import) ─
+  ctx.tools.register({
     name: MANAGER_TOOL,
     description: 'Control which tool schemas are injected into the model context of this session. ' +
       'Actions: "list" (every visible tool with its hidden state), "hide" (remove the named tools from the model context — ' +
       'they also become uncallable via UNKNOWN_TOOL), "show" (restore the named tools), "reset" (clear the hidden set). ' +
       'Changes persist to the plugin state file and take effect on the next model step.',
     parameters: {
-      action: {
-        type: 'string',
-        enum: ['list', 'hide', 'show', 'reset'],
-        required: true,
-        description: 'What to do: list | hide | show | reset.',
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'hide', 'show', 'reset'],
+          description: 'What to do: list | hide | show | reset.',
+        },
+        tools: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tool names the action applies to (required for hide/show; ignored for list/reset).',
+        },
       },
-      tools: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Tool names the action applies to (required for hide/show; ignored for list/reset).',
-      },
+      required: ['action'],
     },
     output: {
       schema: {
@@ -289,51 +311,49 @@ export async function apply(ctx, config) {
     },
     async execute(args, exec) {
       const action = args.action;
+      const st = (extra) => ({ hidden: [...hidden].sort(), stateFile, ...extra });
+      const vis = () => visibleSchemas(exec).map((s) => s.name).sort();
       if (action === 'list') {
-        return {
-          ...uiState(exec),
-          visible: visibleSchemas(exec).map((schema) => schema.name).sort(),
-          message: `${visibleSchemas(exec).length} tools visible, ${hidden.size} hidden`,
-        };
+        return { ...st(), visible: vis(), filterMode, message: `${vis().length} tools visible, ${hidden.size} hidden` };
       }
       if (action === 'reset') {
         hidden.clear();
         descriptions.clear();
         applyFilter();
         const persistError = await persistSafely();
-        return { ...uiState(exec, persistError), message: persistError ? 'hidden set cleared but ' + persistError : 'hidden set cleared' };
+        return { ...st(), visible: vis(), filterMode, message: persistError ? 'hidden set cleared but ' + persistError : 'hidden set cleared' };
       }
       const names = Array.isArray(args.tools) ? args.tools.filter((entry) => typeof entry === 'string') : [];
       if (names.length === 0) {
-        return { ...uiState(exec), message: `no tool names given for "${action}"` };
+        return { ...st(), visible: vis(), filterMode, message: `no tool names given for "${action}"` };
       }
-      const known = new Set(visibleSchemas(exec).map((schema) => schema.name));
+      const known = new Set(vis());
       const unknown = names.filter((entry) => !known.has(entry) && !hidden.has(entry));
       if (unknown.length > 0) {
-        return { ...uiState(exec), message: `unknown tool name(s): ${unknown.join(', ')}` };
+        return { ...st(), visible: vis(), filterMode, message: `unknown tool name(s): ${unknown.join(', ')}` };
       }
       if (names.includes(MANAGER_TOOL)) {
-        return { ...uiState(exec), message: `refusing to hide ${MANAGER_TOOL} (you would lose control of this filter)` };
+        return { ...st(), visible: vis(), filterMode, message: `refusing to hide ${MANAGER_TOOL} (you would lose control of this filter)` };
       }
       let persistError = null;
       if (action === 'hide') {
         for (const entry of names) {
           const result = await setHidden(entry, true, exec);
-          if (result.error) return { ...uiState(exec), message: result.error };
+          if (result.error) return { ...st(), visible: vis(), filterMode, message: result.error };
           if (result.persistError) persistError = result.persistError;
         }
       } else if (action === 'show') {
         for (const entry of names) {
           const result = await setHidden(entry, false, exec);
-          if (result.error) return { ...uiState(exec), message: result.error };
+          if (result.error) return { ...st(), visible: vis(), filterMode, message: result.error };
           if (result.persistError) persistError = result.persistError;
         }
       } else {
-        return { ...uiState(exec), message: `unknown action "${action}"` };
+        return { ...st(), visible: vis(), filterMode, message: `unknown action "${action}"` };
       }
-      return { ...uiState(exec, persistError), message: `${action} applied to ${names.join(', ')} — takes effect on the next model step` + (persistError ? ' (warning: ' + persistError + ')' : '') };
+      return { ...st(), visible: vis(), filterMode, message: `${action} applied to ${names.join(', ')} — takes effect on the next model step` + (persistError ? ' (warning: ' + persistError + ')' : '') };
     },
-  }));
+  });
 
   // ── start with persisted state ─────────────────────────────────────────────
   await load();
