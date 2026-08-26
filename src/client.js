@@ -145,35 +145,38 @@ window.__ModuleLoader__.load({
         },
           h('input', {
             type: 'checkbox',
-            checked: !!tool.hidden,
+            // CHECKED = enabled (injected into the model context); unchecked = disabled.
+            checked: !tool.hidden,
             disabled: busy || tool.name === 'tool_visibility',
             onChange: () => toggle(tool.name, !!tool.hidden),
           }),
           h('code', { className: 'tvi-name' }, tool.name),
           h('span', { className: 'tvi-desc' },
-            tool.hidden ? '（已隐藏，不注入上下文）' : (tool.description || '')),
+            tool.hidden ? '（未启用，不注入上下文）' : (tool.description || '')),
         );
 
         const groupRows = groupEntries.map(([label, tools]) => {
           const total = tools.length;
           const groupHidden = tools.filter((t) => t.hidden).length;
+          const allEnabled = groupHidden === 0;
           const allHidden = groupHidden === total;
-          const someHidden = groupHidden > 0 && groupHidden < total;
+          const someDisabled = groupHidden > 0 && groupHidden < total;
           const isCollapsed = !!collapsed[label];
           return h('div', { key: label, className: 'tvi-group' },
             h('div', { className: 'tvi-group-head', onClick: () => toggleCollapse(label) },
               h('span', { className: 'tvi-group-caret' + (isCollapsed ? ' collapsed' : '') }, '▾'),
               h('input', {
                 type: 'checkbox',
-                checked: allHidden,
-                ref: (el) => { if (el) el.indeterminate = someHidden; },
+                // CHECKED = whole group enabled; unchecked = whole group disabled.
+                checked: allEnabled,
+                ref: (el) => { if (el) el.indeterminate = someDisabled; },
                 disabled: busy || tools.every((t) => t.name === 'tool_visibility'),
                 onClick: (e) => e.stopPropagation(),
                 onChange: () => toggleGroup(label, allHidden),
               }),
               h('span', { className: 'tvi-group-name' }, label),
               h('span', { className: 'tvi-group-badge' + (groupHidden > 0 ? ' hot' : '') },
-                groupHidden > 0 ? `${groupHidden}/${total} 隐藏` : `${total} 个`),
+                groupHidden > 0 ? `${groupHidden}/${total} 未启用` : `${total} 个`),
             ),
             isCollapsed ? null : h('div', { className: 'tvi-group-body' }, tools.map(toolRow)),
           );
@@ -182,7 +185,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'tvi-root' },
           h('h3', { className: 'tvi-title' }, 'Tool 注入控制'),
           h('p', { className: 'tvi-sub' },
-            `状态文件: ${data.stateFile || '不可用'} · 过滤机制: ${data.filterMode || 'none'} · 共 ${shown.length} 个工具，已隐藏 ${hiddenCount} 个`),
+            `状态文件: ${data.stateFile || '不可用'} · 过滤机制: ${data.filterMode || 'none'} · 共 ${shown.length} 个工具，未启用 ${hiddenCount} 个 · 勾选 = 启用`),
           h('div', { className: 'tvi-bar' },
             h('input', {
               type: 'search',
