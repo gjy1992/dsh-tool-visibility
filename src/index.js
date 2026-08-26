@@ -234,8 +234,13 @@ export async function apply(ctx, config = {}) {
   }
 
   // ── browser UI RPC (Settings → 工具注入控制) ───────────────────────────────
-  const connection = ctx.get('connection');
-  if (connection && connection.rpc) {
+  // The web profile mounts the `connection` host service AFTER this root row
+  // applies, so registration must wait for the service instead of assuming it
+  // exists at apply time (a missing channel would surface as HTTP 405 from the
+  // SPA fallback).
+  const registerRpc = () => {
+    const connection = ctx.get('connection');
+    if (!connection || !connection.rpc) return false;
     connection.rpc.handle(RPC_CHANNEL, async (endpoint, payload) => {
       try {
         if (endpoint === 'list') return rpcOk(uiState(null));
@@ -267,6 +272,12 @@ export async function apply(ctx, config = {}) {
         return rpcErr('internal', error instanceof Error ? error.message : String(error));
       }
     }, { authority: 'loopback' });
+    return true;
+  };
+  if (!registerRpc()) {
+    const off = ctx.on('internal/service', (name) => {
+      if (name === 'connection' && registerRpc()) off();
+    });
   }
 
   // ── model-facing manager tool (hand-rolled definition: no dsh-tools import) ─
