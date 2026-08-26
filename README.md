@@ -63,11 +63,6 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
     stateFile: 'F:/my/state.json'
 ```
 
-## 动态版说明（测试用）
-
-仓库里早期的「动态 Cordis 插件」（`cordis_define`/`cordis_run` 定义、进程内生效）是
-**测试/原型**手段：重启即失、沙箱摸不到 `tools.restrict`。正式使用与发布一律用本静态包。
-
 ## 开发
 
 标准 cordis 插件包（ESM，命名导出 `name` / `inject` / `Config` / `apply`；client 半区
