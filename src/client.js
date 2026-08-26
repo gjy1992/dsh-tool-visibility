@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
 
       /** One Connection RPC round-trip; returns the decoded value or throws. */
       const call = async (endpoint, payload) => {
-        const result = await ctx.connection.call(CHANNEL, endpoint, payload);
+        const result = await ctx.connection.rpc.call(CHANNEL, endpoint, payload);
         if (result.ok) return result.value;
         const message = result.error && result.error.message ? result.error.message : 'RPC failed';
         throw new Error(message);
