@@ -33,11 +33,11 @@ import z from '@deepseek-ai/schemastery';
 
 export const name = 'dsh-tool-visibility';
 
-export const inject = ['tools', 'connection'];
+export const inject = ['tools'];
 
 export const Config = z.object({
   /** Absolute path of the JSON state file. Default: $DSH_HOME/tool-visibility.json. */
-  stateFile: z.string().optional(),
+  stateFile: z.string().default(''),
 });
 
 const MANAGER_TOOL = 'tool_visibility';

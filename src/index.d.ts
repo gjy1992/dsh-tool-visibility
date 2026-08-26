@@ -7,6 +7,6 @@ export interface Config {
 }
 
 export const name: 'dsh-tool-visibility';
-export const inject: ['tools', 'connection'];
+export const inject: ['tools'];
 export const Config: Schema<Config>;
 export function apply(ctx: Context, config: Config): Promise<void>;
