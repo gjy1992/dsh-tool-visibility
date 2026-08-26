@@ -88,9 +88,5 @@
     "@deepseek-ai/dsh-tools": {
       "optional": true
     }
-  },
-  "scripts": {
-    "bundle": "tsdown",
-    "watch": "tsdown --watch"
   }
 }

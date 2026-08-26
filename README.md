@@ -43,7 +43,7 @@
 ```
 
 Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.client` 字段 +
-`./client` 出口），`npm run bundle`（tsdown）产出可加载的 client bundle。
+`./client` 出口）；`src/client.js` 即 `__ModuleLoader__` 格式的浏览器 bundle，**无需构建**。
 
 ## 持久化
 
