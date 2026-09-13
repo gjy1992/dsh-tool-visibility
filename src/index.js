@@ -234,51 +234,122 @@ export async function apply(ctx, config = {}) {
   }
 
   // ── browser UI RPC (Settings → 工具注入控制) ───────────────────────────────
-  // The web profile mounts the `connection` host service AFTER this root row
-  // applies, so registration must wait for the service instead of assuming it
-  // exists at apply time (a missing channel would surface as HTTP 405 from the
-  // SPA fallback).
-  const registerRpc = () => {
-    const connection = ctx.get('connection');
-    if (!connection || !connection.rpc) return false;
-    connection.rpc.handle(RPC_CHANNEL, async (endpoint, payload) => {
-      try {
-        if (endpoint === 'list') return rpcOk(uiState(null));
-        if (endpoint === 'set') {
-          const name = payload && typeof payload.name === 'string' ? payload.name : null;
-          const hide = !!(payload && payload.hidden);
-          if (!name) return rpcErr('bad-request', 'missing tool name');
-          const result = await setHidden(name, hide, null);
-          if (result.error) return rpcErr('bad-request', result.error);
-          return rpcOk(uiState(null, result.persistError));
-        }
-        if (endpoint === 'set-group') {
-          const group = payload && typeof payload.group === 'string' ? payload.group : null;
-          const hide = !!(payload && payload.hidden);
-          if (!group) return rpcErr('bad-request', 'missing group');
-          const result = await setGroupHidden(group, hide, null);
-          if (result.error) return rpcErr('bad-request', result.error);
-          return rpcOk(uiState(null, result.persistError));
-        }
-        if (endpoint === 'reset') {
-          hidden.clear();
-          descriptions.clear();
-          applyFilter();
-          const persistError = await persistSafely();
-          return rpcOk(uiState(null, persistError));
-        }
-        return rpcErr('bad-request', `unknown endpoint: ${endpoint}`);
-      } catch (error) {
-        return rpcErr('internal', error instanceof Error ? error.message : String(error));
+  /** One `/tool-visibility` RPC endpoint (list / set / set-group / reset). */
+  const handleRpc = async (endpoint, payload) => {
+    try {
+      if (endpoint === 'list') return rpcOk(uiState(null));
+      if (endpoint === 'set') {
+        const name = payload && typeof payload.name === 'string' ? payload.name : null;
+        const hide = !!(payload && payload.hidden);
+        if (!name) return rpcErr('bad-request', 'missing tool name');
+        const result = await setHidden(name, hide, null);
+        if (result.error) return rpcErr('bad-request', result.error);
+        return rpcOk(uiState(null, result.persistError));
       }
-    }, { authority: 'loopback' });
-    return true;
+      if (endpoint === 'set-group') {
+        const group = payload && typeof payload.group === 'string' ? payload.group : null;
+        const hide = !!(payload && payload.hidden);
+        if (!group) return rpcErr('bad-request', 'missing group');
+        const result = await setGroupHidden(group, hide, null);
+        if (result.error) return rpcErr('bad-request', result.error);
+        return rpcOk(uiState(null, result.persistError));
+      }
+      if (endpoint === 'reset') {
+        hidden.clear();
+        descriptions.clear();
+        applyFilter();
+        const persistError = await persistSafely();
+        return rpcOk(uiState(null, persistError));
+      }
+      return rpcErr('bad-request', `unknown endpoint: ${endpoint}`);
+    } catch (error) {
+      return rpcErr('internal', error instanceof Error ? error.message : String(error));
+    }
   };
-  if (!registerRpc()) {
-    const off = ctx.on('internal/service', (name) => {
-      if (name === 'connection' && registerRpc()) off();
-    });
-  }
+
+  /** Body cap: every payload here is a tool name, a group name, or nothing. */
+  const RPC_BODY_LIMIT = 64 * 1024;
+  /** Endpoint below the channel, or undefined when the pathname is not ours. */
+  const endpointOf = (url) => {
+    const pathname = new URL(url ?? '/', 'http://dsh.internal').pathname;
+    if (!pathname.startsWith(`${RPC_CHANNEL}/`)) return undefined;
+    const endpoint = pathname.slice(RPC_CHANNEL.length + 1);
+    const segments = endpoint.split('/');
+    return segments.every((segment) => /^[A-Za-z0-9_$.-]+$/.test(segment)) ? endpoint : undefined;
+  };
+  /** Request body as JSON, or undefined when empty, oversized, or unparsable. */
+  const readJsonBody = async (req) => {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > RPC_BODY_LIMIT) return undefined;
+      chunks.push(chunk);
+    }
+    try {
+      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const writeJson = (res, value) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(value));
+  };
+
+  // The channel is a webServer route, so it is mounted from a context that
+  // injects BOTH `webServer` (the route table) and `connection` (the Host/Origin
+  // + browser-session fence). Neither exists while this root row applies in the
+  // web profile, and reading an un-injected service is fatal in current cordis
+  // — hence `ctx.inject` instead of probing once at apply time.
+  //
+  // The route is registered here rather than through `connection.rpc.handle`
+  // because that helper resolves `webServer` through the *channel service's*
+  // own context, which never injects it (`cannot get property "webServer"
+  // without inject`). The wire envelope below is the same Connection RPC
+  // contract the browser half sends through `ctx.connection.rpc.call`.
+  ctx.inject(['connection', 'webServer'], (webCtx) => {
+    if (typeof webCtx.connection.requestRejection !== 'function') {
+      console.warn(`[${name}] connection service exposes no requestRejection(); ${RPC_CHANNEL} channel not mounted`);
+      return;
+    }
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'prefix',
+      path: RPC_CHANNEL,
+      handler: async (req, res) => {
+        const rejection = webCtx.connection.requestRejection(req);
+        if (rejection !== undefined) {
+          res.writeHead(rejection);
+          res.end(rejection === 401 ? 'unauthorized' : 'forbidden');
+          return;
+        }
+        const endpoint = endpointOf(req.url);
+        if (req.method !== 'POST' || endpoint === undefined) {
+          res.writeHead(404);
+          res.end('not found');
+          return;
+        }
+        const contentType = String(req.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
+        if (contentType !== 'application/json') {
+          res.writeHead(415);
+          res.end('content type must be application/json');
+          return;
+        }
+        const message = await readJsonBody(req);
+        if (message === undefined || message.type !== 'client-request' || typeof message.rpcId !== 'string' || typeof message.method !== 'string') {
+          res.writeHead(400);
+          res.end('body is not a connection client-request');
+          return;
+        }
+        if (message.method !== endpoint) {
+          writeJson(res, { type: 'server-response', rpcId: message.rpcId, result: rpcErr('gateway/bad-request', `method ${JSON.stringify(message.method)} does not match endpoint ${JSON.stringify(endpoint)}`) });
+          return;
+        }
+        writeJson(res, { type: 'server-response', rpcId: message.rpcId, result: await handleRpc(endpoint, message.payload) });
+      },
+    }), `${name}: ${RPC_CHANNEL} channel`);
+  });
 
   // ── model-facing manager tool (hand-rolled definition: no dsh-tools import) ─
   ctx.tools.register({

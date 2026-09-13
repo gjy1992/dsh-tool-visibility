@@ -30,6 +30,12 @@
   复选框逐工具开关；按名称前缀分组、支持搜索与整组批量开关；顶部有 刷新 / 全部恢复；
   显示状态文件路径与当前生效的过滤机制。
   Client↔Host 走 Connection RPC 通道 `/tool-visibility`（endpoints: `list` / `set` / `set-group` / `reset`）。
+  > 兼容性：`connection.rpc.handle()` 是框架内部通道实现，第三方插件调用时它会用**通道服务自身的
+  > ctx** 解析 `webServer`：在 dsh ≥ 0.1.5-rc.1（cordis 4.0.2）上直接抛
+  > `cannot get property "webServer" without inject`（旧版本只静默取到 undefined，所以通道一直缺失）。
+  > 因此本插件在同时注入 `webServer` + `connection` 的上下文里自行注册 `/tool-visibility`
+  > 前缀路由，复用 `connection.requestRejection()` 的 Host/Origin + 浏览器会话校验；
+  > 报文仍是标准 Connection RPC 信封（`client-request` / `server-response`），client 半区无需改动。
 - **模型工具** `tool_visibility`：`list` / `hide` / `show` / `reset`。
 
 ## 安装 / 挂载
