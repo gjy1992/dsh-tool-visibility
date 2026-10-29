@@ -1,0 +1,14 @@
+{
+  "hidden": [],
+  "groups": [
+    {
+      "key": "workspace",
+      "label": "工作区工具",
+      "intro": "读写工作区文件",
+      "members": [
+        "working_directory"
+      ],
+      "enabled": true
+    }
+  ]
+}

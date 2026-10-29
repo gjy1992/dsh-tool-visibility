@@ -1,7 +1,7 @@
 {
   "name": "@rayfalling/dsh-tool-visibility",
-  "version": "0.3.4",
-  "description": "Control which tool schemas are injected into the DeepSeek Harness model context. Registers a tool_visibility manager tool AND a settings-page UI (Settings → 工具注入控制) with per-tool toggles; backed by the framework-native tools.restrict filter and persisted to a JSON state file.",
+  "version": "0.6.0",
+  "description": "Control which tool schemas are injected into the DeepSeek Harness model context, with user-defined tool groups for progressive disclosure: each enabled group exposes exactly one group_<key> tool (its description IS the group intro), and calling it discloses the group's tools to that session only. Settings-page UI + tool_visibility manager tool; persisted state; framework-native tools.restrict filter.",
   "type": "module",
   "main": "src/index.js",
   "types": "src/index.d.ts",
@@ -35,13 +35,14 @@
     "context",
     "token"
   ],
+  "author": "gjy1992",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rayfalling/dsh-tool-visibility.git"
+    "url": "git+https://github.com/gjy1992/dsh-tool-visibility.git"
   },
-  "homepage": "https://github.com/rayfalling/dsh-tool-visibility#readme",
+  "homepage": "https://github.com/gjy1992/dsh-tool-visibility#readme",
   "bugs": {
-    "url": "https://github.com/rayfalling/dsh-tool-visibility/issues"
+    "url": "https://github.com/gjy1992/dsh-tool-visibility/issues"
   },
   "dsh": {
     "client": {
@@ -57,11 +58,11 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-client-connection": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-client-ui-renderer": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-scope": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-connection": "^0.1.5-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": "^0.1.5-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-scope": "^0.1.5-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2 || ^0.2.0-rc.1",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {

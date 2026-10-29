@@ -1,0 +1,333 @@
+{
+  "contractVersion": 1,
+  "items": [
+    {
+      "id": "AC1",
+      "weight": "must",
+      "statement": "未配置任何分组时，插件行为与 0.4.0 一致：工具集合不变，设置页仍显示逐工具开关与全部恢复。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node scripts/verify/ac1.mjs",
+          "expect": "AC1 PASS",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "安装后在无 groups 的状态文件下启动，工具列表与 0.4.0 相同，设置页无分组区块或分组区块为空且不报错",
+          "evidence": "prose",
+          "checklist": [
+            "工具名集合与 0.4.0 快照逐名相等",
+            "设置页仍有逐工具开关/搜索/刷新/全部恢复",
+            "无 groups 配置时不出现空分组区块且不报错"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC2",
+      "weight": "must",
+      "statement": "分组定义可在设置页增删改（名称/介绍/成员），并持久化到 tool-visibility.json 的 groups 字段，重启后保留。",
+      "checks": [
+        {
+          "kind": "artifact",
+          "check": "C:/Users/<user>/.dsh/tool-visibility.json :: \"groups\"",
+          "evidence": "file-hash"
+        },
+        {
+          "kind": "judged",
+          "check": "设置页可新建分组、改名、删除、勾选成员并保存，刷新后状态保持",
+          "evidence": "prose",
+          "checklist": [
+            "新建分组后 groups-list 返回该组",
+            "改名后 label/intro 更新且 key 不变",
+            "删除后 groups-list 不再返回该组",
+            "刷新页面与重启宿主后 groups 仍在"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC3",
+      "weight": "must",
+      "statement": "每个启用分组只注册一个披露工具 group_<key>，其 description 等于该组 intro；组内工具不出现在 tools.schemas()。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node --input-type=module -e \"import('file:///F:/gitProject/dsh-plugins/dsh-tool-visibility/src/index.js').then(m=>console.log(typeof m.apply))\"",
+          "expect": "function",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "加载分组配置后，schemas 中每组仅多出一个 group_* 工具，成员工具缺席",
+          "evidence": "prose",
+          "checklist": [
+            "每组在 schemas 中恰多一个 group_<key>",
+            "组成员工具不出现在 schemas",
+            "group_<key>.description === 该组 intro"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC4",
+      "weight": "must",
+      "statement": "调用披露工具后，同一会话下一步可见集包含组内全部未被 hidden 的工具；PTC 模式下 tools:sdk 段同步包含其声明。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node scripts/verify/ac4.mjs",
+          "expect": "AC4 PASS",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "原生模式：调用 group_x 后下一步 tools 列表出现成员；PTC 模式：同一会话 SDK 段出现成员声明",
+          "evidence": "prose",
+          "checklist": [
+            "原生：第 N+1 步 tools 列表含全部未 hidden 成员",
+            "PTC：第 N+1 步 tools:sdk 段含成员声明",
+            "第 N 步已组装的集合不受影响"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC5",
+      "weight": "must",
+      "statement": "披露后通过 system prompt 段补注入已披露工具清单（名 + 一句话介绍），会话历史不新增消息。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node scripts/verify/ac5.mjs",
+          "expect": "AC5 PASS",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "披露后下一轮 assembly.sections 出现披露清单段，且 messages 未新增",
+          "evidence": "prose",
+          "checklist": [
+            "assembly.sections 出现已披露清单段",
+            "逐条含工具名与一句话介绍",
+            "messages 计数未增加"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC6",
+      "weight": "must",
+      "statement": "披露状态为会话级：新会话开始时回到仅含披露工具的状态；披露不写入 state 文件。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node -e \"const fs=require('fs');const p='C:/Users/<user>/.dsh/tool-visibility.json';const t=fs.existsSync(p)?fs.readFileSync(p,'utf8'):'{}';process.exit(/disclosed|opened/i.test(t)?1:0)\"",
+          "expect": "exit 0",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "新建会话后组内工具重新不可见",
+          "evidence": "prose",
+          "checklist": [
+            "新建 agent 会话后组内工具重新不可见",
+            "state 文件中不存在 disclosed/opened 字段",
+            "重启宿主后披露状态清空"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC7",
+      "weight": "must",
+      "statement": "hidden 优先于披露：组成员在 hidden 中时披露后仍不可见，从 hidden 恢复后可见。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node scripts/verify/ac7.mjs",
+          "expect": "AC7 PASS",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "隐藏成员 A 后披露该组，A 仍不在工具集合；取消隐藏后 A 出现",
+          "evidence": "prose",
+          "checklist": [
+            "成员在 hidden 时披露后仍不可见",
+            "取消 hidden 后该成员可见",
+            "未归组工具的 hidden 行为一致"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC8",
+      "weight": "must",
+      "statement": "未归组工具始终可见；run_code 与 tool_visibility 不能被分组收纳或隐藏。",
+      "checks": [
+        {
+          "kind": "command",
+          "check": "node scripts/verify/ac8.mjs",
+          "expect": "AC8 PASS",
+          "evidence": "stdout"
+        },
+        {
+          "kind": "judged",
+          "check": "未归组工具在任意披露阶段均可见；尝试把 run_code 写入分组被拒绝或忽略",
+          "evidence": "prose",
+          "checklist": [
+            "未归组工具在未披露/已披露两阶段均可见",
+            "把 run_code 写入 groups 被拒绝或忽略",
+            "tool_visibility 不能被 hidden"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AC9",
+      "weight": "should",
+      "statement": "删除分组的披露工具不再注册；组内已不存在的工具名在保存/加载时被安全忽略。",
+      "checks": [
+        {
+          "kind": "judged",
+          "check": "删除组后 group_* 从 schemas 消失；members 含未知工具名时启动不报错",
+          "evidence": "prose",
+          "checklist": [
+            "删除分组后 group_* 从 schemas 消失",
+            "members 含未知工具名时保存不报错",
+            "加载含未知成员的 state 不报错"
+          ]
+        }
+      ]
+    }
+  ],
+  "stopConditions": {
+    "impossible": [
+      "dsh 的 tools.restrict 无法在插件 scope 内按会话重算，且 waterfall 也无法区分会话"
+    ],
+    "needsHuman": [
+      "需要在真实 GUI 中人工确认 PTC 模式下的 SDK 段与 prompt 段观感"
+    ]
+  },
+  "maxRounds": 6,
+  "plan": {
+    "milestones": [
+      {
+        "id": "M1",
+        "title": "契约 v2 工件 + A 段探测门 + B 段实现（基线/统一 writer/groups-save）",
+        "deliverable": "首个工件 docs/contract-v2.md：AC1 基线口径（工作副本 + 版本/sha256 + 工具名集合与 UI 存在性，不比对 description 文案）、AC6 会话口径（按 agent 会话 id，新建会话或重启回初始，披露不落盘）、AC8 口径（未归组不进 deny、hidden 对所有工具优先、run_code 与 tool_visibility 既不可入组也不可 hidden），附本轮用户确认原文。A 段 docs/probe.md 实测十项并逐项给「主方案 / Plan B / 停止」：(1) restrict 层级合成（交集 vs 覆盖）；(2) ctx.agents.list() 与跨 agent.ctx 装/卸 restrict，不可跨装记 Plan B（只由 group_* execute 的 exec.agent.ctx 安装，清理依赖 ctx 生命周期 + 惰性重算）；(3) 安装时机能否影响同轮 schemas()；(4) dispose+重注册同轮生效；(5) **scopeOf/会话 id 能否区分不同 agent 会话**（否则停止，AC6 无解）；(6) assemble context.scope 与 scopeOf 一致；(7) preset 下不可约束成员名单；(8) PTC 下 sdk 是否按 view 重算；(9) 根层 waterfall 能否剥离成员 schema；(10) preset scope 固定 order 段能否读 scope，不能则 Plan C（agent/created 从 agent.ctx 注册，文本每轮读活状态）。出口语义：A 段全部通过或落入已定义 Plan B/C 才进 B 段；任一停止项成立 → 本里程碑 blocked 回评审，不声称 AC 覆盖。B 段：(b1) 运行快照基线：用当前工作副本（校验 version===0.4.0 + 两源文件 sha256）装到临时 profile，启宿主抓 tools.schemas() 名称列表、/tool-visibility 的 list/set-group/reset 响应、UI 中逐工具开关/全部恢复/前缀分组存在性；宿主不可启则退化为最小 ctx 夹具并记录原因。(b2) 统一 writer：hidden/show/reset/groups-save 全走同一串行 writer（互斥 + 临时文件 rename），保留未知顶层键与未知 group 字段。(b3) groups[{key,label,intro,members,enabled}]，条目使用 label/intro/members，key 创建后不可变。(b4) groups-save 端点 + 脚本客户端：整批校验（key/唯一/去重/白名单拒绝 run_code、tool_visibility、group_*、跨组；不可约束成员 fail-closed 列名单；整组全不可约束拒绝创建）→ 落盘 → 应用 → 失败回滚。",
+        "satisfies": [
+          "AC2",
+          "AC3",
+          "AC8"
+        ],
+        "verification": "1) contract-v2.md 与 probe.md 均入仓，十项各有实测命令/输出/结论；2) 快照入仓并记录抓取方式；3) 保存后同轮 schemas 每组恰多一个 group_*、成员缺席；4) description === intro；5) 六类非法成员被拒且 state 未改写；6) 注册抛错回滚且 state 未变；7) 20 次并发写后文件完整可解析；8) groups-save 后再 hide/reset，groups 仍在且文件可解析。"
+      },
+      {
+        "id": "M1b",
+        "title": "设置页分组管理 UI（前移，解除 AC2#1 证据缺口）",
+        "deliverable": "src/client.js 新增分组区块：列出 groups-list 返回的分组（label、key、intro、成员数、group_<key> 名称、启用开关）；新建（label→自动 slug、intro、成员多选）、改名（label/intro，key 不变）、删除、勾选成员、保存（groups-save）并即时刷新；保留原有逐工具开关/搜索/刷新/全部恢复/前缀分组。",
+        "satisfies": [
+          "AC2",
+          "AC1"
+        ],
+        "verification": "在真实宿主中打开 Settings → 工具注入控制：新建组→改名→勾成员→保存→刷新页面→重启宿主，每步记录 groups-list 输出与 tool-visibility.json 的 groups 内容；删除组后 group_* 从工具列表消失。"
+      },
+      {
+        "id": "M1r",
+        "title": "绑定修订：AC2 从 M1 解绑，改由 M1b 承担（审计要求）",
+        "deliverable": "按审计意见（round 6）修订验收绑定：M1 只承担 AC3 与 AC8（数据模型、group_* 注册、成员缺席、description===intro、六类非法成员拒绝、回滚、并发写、hide/reset 后 groups 保留、重启重载）；AC2（含 AC2#0 持久化工件与 AC2#1 设置页 GUI 全链路）整体由 M1b 承担，理由：M1 的交付明确不含设置页分组 UI，GUI 断言在 M1 范围内不成立。同步在 docs/acceptance.md 写入该映射，并声明 v1 契约条款文字不变、仅调整里程碑归属。",
+        "satisfies": [
+          "AC2"
+        ],
+        "verification": "docs/acceptance.md 的『判定归属』一节列出 AC2→M1b、AC3/AC8→M1；M1 的证据清单不再包含任何 GUI 断言；M1b 证据 #12/#20 可独立支撑 AC2#1。"
+      },
+      {
+        "id": "M2",
+        "title": "披露执行、时序边界、会话隔离、删除清理、未知成员",
+        "deliverable": "披露状态按 agent 会话 id 建键（Map<sessionScopeKey,Set<groupKey>>，键口径由 A 段 (5) 定）；group_* execute 更新后先 dispose 再重装；删除组清理该 key（主方案枚举现存 agent；Plan B 下依赖 ctx 生命周期 + 下次 ensureInstalled/披露时按活配置重算）；members 含未知名保存/加载均忽略；legacy 前缀 hidden 是总开关。",
+        "satisfies": [
+          "AC4",
+          "AC6",
+          "AC9"
+        ],
+        "verification": "1) 第 N 步披露 → 第 N+1 步 schemas 含成员，第 N 步已组装集合不变；2) 两会话交替披露互不可见；3) 连披露 A、B 后两组员可见，重复披露同组不回叠；4) 删组后该组员不再被 deny 或声明（主方案断言所有 agent；Plan B 断言任一 agent 的 schema 与 prompt 段）；5) 含未知成员的真实 state 启动不报错且该名忽略；6) **新建 agent 会话首步视图完整集合** = 全部启用组各一个 group_* ∪ 全部未归组工具（扣掉 hidden），不多不少无重复；7) legacy 隐藏的工具在披露其所在组后仍不可见。"
+      },
+      {
+        "id": "M3",
+        "title": "hidden 双层、保留工具、未归组可见性（原生 + PTC）",
+        "deliverable": "hidden 挂插件 scope restrict 且对所有工具（归组/未归组）一致生效；per-agent deny 只表达未披露成员；hidden 写入路径拒绝 run_code 与 tool_visibility；agent 销毁释放 disposer 并删 Map；未归组工具不进任何 deny。",
+        "satisfies": [
+          "AC6",
+          "AC7",
+          "AC8"
+        ],
+        "verification": "1) hidden 成员披露后仍不可见，取消 hidden 后出现；2) 未归组工具被 hidden 时不可见（AC8 与 AC7 口径一致），取消 hidden 后可见；3) 对 run_code/tool_visibility 执行 hide 被拒绝且仍可见；4) 披露 A 后该 agent 视图未归组工具全在场、成员不在场；5) PTC 形态同项：披露后 run_code 仍在 wire、未归组工具可在程序内绑定、tool_visibility 可调用；6) agent 销毁后该 scope restriction 归零且 Map 减一；7) 同键重复安装 5 次不叠加；8) 新建会话首步成员不可见。"
+      },
+      {
+        "id": "M4",
+        "title": "PTC × preset 验收：主方案 / Plan B 的按步判定",
+        "deliverable": "preset 挂载验收。主方案：dsh 的 sdkSection 按 view 重算，成员声明由 dsh 段提供。Plan B 仅在 A 段 (8) 判定主方案不生效时启用：本插件注册 SDK 声明段自渲染（插件 scope、order 紧随 TOOLS_SDK、上限 8KB）。判定按步求值、启动期不缓存；验收断言「每个已披露成员在 SDK 文本中恰好声明一次」。两条路线都失败 → 停止并重新评审。",
+        "satisfies": [
+          "AC4",
+          "AC3"
+        ],
+        "verification": "PTC+preset：未披露时 SDK 无成员、wire 仅 run_code；第 N 步调用 group_a 后第 N+1 步 SDK 含成员且 tools.<member> 可绑定；统计每个已披露成员在 SDK 文本中的声明次数恰为 1；记录实际生效路径；原生模式同一步 schemas 含成员。"
+      },
+      {
+        "id": "M5",
+        "title": "已披露清单 prompt 段（逐条 name + 一句话介绍，含 Plan C 路径）",
+        "deliverable": "段文本为纯函数、每次组装读活状态：固定 order（A 段站点）或 Plan C（agent/created 从 agent.ctx 注册、随 agent 回收），两路径共用渲染函数。规则：逐条「名 — 一句话介绍」；介绍取 description 首句（按 。/./；/; / 换行切分）；缺失用组 intro 首句；都空只渲名；隐藏或 schema 已消失的成员跳过；按名去重。不改 run_code schema、不新增会话消息。",
+        "satisfies": [
+          "AC5"
+        ],
+        "verification": "披露 A 组后同 agent 下一轮 assembly.sections：逐条断言每个已披露工具都有该行且含名与介绍（原生一次、PTC 一次）；编辑组 intro 后介绍随之变化；隐藏成员行缺席；同名去重；messages 计数不变。"
+      },
+      {
+        "id": "M6",
+        "title": "设置页分组管理 UI + legacy 共存 + AC1 中间回归",
+        "deliverable": "分组区块：列表/新建（slug 自动只读）/改名（label+intro，key 不变）/删除/intro/成员多选（搜索、标 hidden、禁选保留与披露工具）/启用开关/显示 group_<key> 与成员数；写操作走 groups-save 即时应用；**intro 修改后已注册 group_* 的 description 同步更新**；legacy 前缀分组与 set-group 保留且 UI 区分；逐工具开关、搜索、刷新、全部恢复保留；无分组时空态。本里程碑重跑 AC1（结论标注为中间回归，最终以 M8 为准）。",
+        "satisfies": [
+          "AC1",
+          "AC2",
+          "AC9"
+        ],
+        "verification": "1) 全链路操作每步刷新保持且模型视图即时变化；2) 改名只改 label/intro，key 不变、已披露状态不丢；3) 编辑 intro 后 group_<key>.description === 新 intro；4) 删组/禁用后 UI 与模型视图同步无残留；5) legacy 与 set-group 与 M1 快照逐条一致；6) 无 groups：工具名集合与 schemas 快照逐名相等，逐工具开关与「全部恢复」存在且可用。"
+      },
+      {
+        "id": "M7",
+        "title": "根层挂载与验收范围工件",
+        "deliverable": "docs/decision-mount.md：验收范围 = agent preset 挂载，附用户确认原文与轮次；生产 preset 配置示例；确认缺失或范围不同时 milestone blocked 并向用户提问。单一挂载规则：分组只由 preset 行启用；根层行同时启用分组时根层忽略、以 preset 为准（warn 一次，断言全局只有一组 group_*）。根层按 A 段 (9)：可剥离 → 过滤 assembly.tools 并用 M4 同一 SDK 处理；不可剥离 → 不注册 group_*、warn、设置页提示不支持。README 写明。",
+        "satisfies": [
+          "AC1"
+        ],
+        "verification": "decision-mount.md 含确认原文与轮次；重复挂载时全局 group_* 数量与配置组数相等；根层 hidden 行为与快照一致；降级时 warn 一次且无 group_* 注册；preset 下同配置正常。"
+      },
+      {
+        "id": "M8",
+        "title": "端到端验收跑（逐条 AC，含最终 AC1 回归）",
+        "deliverable": "可重跑脚本 + 手工清单，逐条执行 AC1–AC9：AC1 快照比对（工具名集合 + UI 四项）+ M7 之后的最终回归；AC2 GUI 全链路 + 刷新 + 重启；AC3 agent 视图精确集合；AC4 原生 + PTC 下一步时序与「每成员恰一次声明」；AC5 段内容逐条 name+intro + messages 计数；AC6 新建 agent 会话完整集合 + state 键检查；AC7 hidden 优先；AC8 未归组在原生与 PTC 均可见、hidden 生效、保留工具不可隐藏；AC9 未知成员 state 启动 + 删组清理。结果写入 docs/acceptance.md。",
+        "satisfies": [
+          "AC1",
+          "AC2",
+          "AC3",
+          "AC4",
+          "AC5",
+          "AC6",
+          "AC7",
+          "AC8",
+          "AC9"
+        ],
+        "verification": "acceptance.md 每条 AC 给出步骤、实际输出、通过/失败；任一失败该 AC 不计通过；脚本幂等可重跑。"
+      }
+    ]
+  },
+  "interpretations": [
+    {
+      "term": "0.4.0",
+      "reading": "基线 = dsh-tool-visibility@0.4.0 的 Git 工作副本（校验 package.json version === 0.4.0 并记录两源文件 sha256）；比对口径 = 工具名集合 + 设置页既有控件存在性，不比对 description 文案。"
+    }
+  ]
+}

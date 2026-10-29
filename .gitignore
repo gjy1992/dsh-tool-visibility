@@ -7,8 +7,16 @@ lib/
 # Local npm cache redirected into the workspace (sandbox-friendly)
 .npm-cache/
 
-# State / local files
+# State / local files (runtime, machine-specific — never commit)
+tool-visibility.json
 .tool-visibility.json
+tool-visibility-stats.json
+*.bak-*
+
+# Scratch / tooling caches
+.tmp/
+.codegraph/
+.dsh-home/
 
 # Logs / OS
 *.log

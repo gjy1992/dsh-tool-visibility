@@ -1,0 +1,15 @@
+# M4 evidence overlay: PTC presentation + a preset that mounts the plugin.
+- id: tools
+  config:
+    mode: ptc
+- insert:
+    - id: preset-tv-m4
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tv-m4
+        name: TV M4
+        description: 'PTC + tool-visibility preset used for M4 acceptance evidence'
+        order: 90
+        plugins:
+          - id: tool-visibility
+            name: '@rayfalling/dsh-tool-visibility'

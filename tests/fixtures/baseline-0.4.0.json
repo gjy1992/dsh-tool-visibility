@@ -1,0 +1,21 @@
+{
+  "version": "0.4.0",
+  "sources": {
+    "src/index.js": "e86ed613be4a3aa9fe9b47db0276e8e32f3fdb83d6ff6a6fe4e3b8fcf74a6163",
+    "src/client.js": "3c1ed2e9773b830261c46b48aec19c184feb5b07509a3f6e7cb404b50c008616",
+    "package.json": "db6d890f8729812cf352503dfdd72f6e37450c06ef7c3c9c1883f9452f20b9e2"
+  },
+  "registeredTools": [
+    "run_code",
+    "tool_visibility"
+  ],
+  "uiElements": [
+    "tvi-search",
+    "tvi-btn:刷新",
+    "tvi-btn:全部恢复",
+    "tvi-group-head",
+    "tvi-row",
+    "set-group"
+  ],
+  "capturedAt": "2026-10-25T07:10:46.827Z"
+}
