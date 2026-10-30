@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 const root = path.resolve(import.meta.dirname, '../..')
 const run = (file) => {
   try {
@@ -19,7 +20,7 @@ const ac1 = run('scripts/verify/ac1.mjs')
 row('AC1', 'node scripts/verify/ac1.mjs', ac1.ok && ac1.out.includes('AC1 PASS'))
 
 // AC2 artifact
-const statePath = 'C:/Users/<user>/.dsh/tool-visibility.json'
+const statePath = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'tool-visibility.json')
 let artifactOk = false, artifactDetail = ''
 try {
   const parsed = JSON.parse(await readFile(statePath, 'utf8'))

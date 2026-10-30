@@ -420,14 +420,41 @@ export async function apply(ctx, config = {}) {
     scheduleUsageWrite();
   }
 
+  /** Remember a started call so its result can be attributed; bounded. */
+  function trackPending(callId, toolName) {
+    if (pendingCalls.size >= PENDING_CALL_LIMIT) {
+      // Drop the oldest half rather than grow without bound.
+      const keys = [...pendingCalls.keys()].slice(0, Math.ceil(PENDING_CALL_LIMIT / 2));
+      for (const key of keys) pendingCalls.delete(key);
+    }
+    pendingCalls.set(callId, { name: toolName, failed: false });
+  }
+
+  function markFailed(callId) {
+    const pending = pendingCalls.get(callId);
+    if (pending === undefined) return;
+    pendingCalls.delete(callId);
+    const entry = usage.get(pending.name);
+    if (entry === undefined) return;
+    entry.errors += 1;
+    usage.set(pending.name, entry);
+    scheduleUsageWrite();
+  }
+
   /**
-   * One session event. Only `tool/call` and `tool/result` matter:
-   *  - `tool/call` counts the invocation (a call that never returns still
-   *    consumed the model's turn, so it must be counted);
-   *  - `tool/result` with `error` (or `message.isError`) marks it failed.
+   * One session event. Four types matter:
+   *
+   *  - `tool/call` / `tool/result` — a model-direct call and its outcome;
+   *  - `tool/ptc-dispatch-start` / `tool/ptc-dispatch` — a sub-call a PTC
+   *    program made through the `run_code` SDK. These carry the real tool name
+   *    and are the ONLY record of what a PTC session actually used.
+   *
+   * The `run_code` transport itself is NOT counted: in PTC mode it is the only
+   * name on the wire, so counting it would bury every real tool under one
+   * meaningless counter. The sub-dispatches it produces carry the signal.
    *
    * `tool/result` carries no tool name, so the name is recovered through the
-   * callId recorded on `tool/call`. A result whose call was never seen (a
+   * id recorded when the call started. A result whose start was never seen (a
    * forked session replaying another session's results) is ignored rather than
    * guessed at.
    */
@@ -436,15 +463,13 @@ export async function apply(ctx, config = {}) {
       if (!event || typeof event.type !== 'string') return;
       const data = event.data;
       if (!data || typeof data !== 'object') return;
+
+      // ── model-direct calls ──
       if (event.type === 'tool/call') {
         const toolName = data.name;
         if (typeof toolName !== 'string' || toolName.length === 0) return;
-        if (pendingCalls.size >= PENDING_CALL_LIMIT) {
-          // Drop the oldest half rather than grow without bound.
-          const keys = [...pendingCalls.keys()].slice(0, Math.ceil(PENDING_CALL_LIMIT / 2));
-          for (const key of keys) pendingCalls.delete(key);
-        }
-        pendingCalls.set(String(data.callId), { name: toolName, failed: false });
+        if (toolName === PTC_TRANSPORT_TOOL) return; // counted through its sub-dispatches
+        trackPending(String(data.callId), toolName);
         bumpUsage(toolName, false);
         return;
       }
@@ -453,18 +478,28 @@ export async function apply(ctx, config = {}) {
           ? data.callId
           : (data.message && typeof data.message.toolCallId === 'string' ? data.message.toolCallId : undefined);
         if (callId === undefined) return;
-        const pending = pendingCalls.get(callId);
-        if (pending === undefined) return;
-        pendingCalls.delete(callId);
-        const failed = data.error !== undefined || (data.message && data.message.isError === true);
-        if (failed) {
-          const entry = usage.get(pending.name);
-          if (entry !== undefined) {
-            entry.errors += 1;
-            usage.set(pending.name, entry);
-            scheduleUsageWrite();
-          }
-        }
+        if (data.error !== undefined || (data.message && data.message.isError === true)) markFailed(callId);
+        else pendingCalls.delete(callId);
+        return;
+      }
+
+      // ── PTC program sub-dispatches ──
+      if (event.type === 'tool/ptc-dispatch-start') {
+        const toolName = data.name;
+        const subCallId = typeof data.subCallId === 'string' ? data.subCallId : undefined;
+        if (typeof toolName !== 'string' || toolName.length === 0 || subCallId === undefined) return;
+        // A nested run_code is the SDK re-entering the transport, not a tool use.
+        if (toolName === PTC_TRANSPORT_TOOL) return;
+        trackPending(subCallId, toolName);
+        bumpUsage(toolName, false);
+        return;
+      }
+      if (event.type === 'tool/ptc-dispatch') {
+        const subCallId = typeof data.subCallId === 'string' ? data.subCallId : undefined;
+        if (subCallId === undefined) return;
+        if (data.isError === true || data.error !== undefined) markFailed(subCallId);
+        else pendingCalls.delete(subCallId);
+        return;
       }
     } catch { /* statistics must never break a turn */ }
   }

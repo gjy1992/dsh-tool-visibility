@@ -38,7 +38,13 @@ const boot = async ({ dir, state }) => {
     message: { role: 'tool', toolCallId: callId, isError: failed === true, content: [] },
     ...(failed === true ? { error: { name: 'ToolError', code: 'internal' } } : {}),
   })
-  return { ctx, tools, rpc, usageFile, stateFile, call, result, emit }
+  const ptcStart = (name, subCallId) => emit('tool/ptc-dispatch-start', { rootCallId: 'r1', parentCallId: 'p1', subCallId, name, arguments: {} })
+  const ptcSettle = (subCallId, failed) => emit('tool/ptc-dispatch', {
+    rootCallId: 'r1', parentCallId: 'p1', subCallId, name: 'x', arguments: {},
+    isError: failed === true, content: [],
+    ...(failed === true ? { error: { name: 'ToolError', code: 'internal' } } : {}),
+  })
+  return { ctx, tools, rpc, usageFile, stateFile, call, result, emit, ptcStart, ptcSettle }
 }
 
 const dir = await mkdtemp(path.join(os.tmpdir(), 'tv-m9-'))
@@ -126,6 +132,35 @@ const shared = await mkdtemp(path.join(os.tmpdir(), 'tv-m9b-'))
   for (let i = 0; i < 3; i += 1) { h.call('gamma', 'g' + i); h.result('g' + i, false) }
   const gamma = (await h.rpc('usage-list', {})).value.rows.find((r) => r.name === 'gamma')
   assert('hidden_but_called_warns', /门槛可能过高/.test(gamma.suggestion), JSON.stringify(gamma.suggestion))
+}
+
+// ── 3c. PTC mode: sub-dispatches counted, the run_code transport is not ───────
+{
+  const dir2 = await mkdtemp(path.join(os.tmpdir(), 'tv-m9c-'))
+  const h = await boot({ dir: dir2, state })
+  // A PTC turn: one run_code call whose program dispatches three real tools.
+  h.call('run_code', 'rc1')
+  h.ptcStart('alpha', 'rc1:ptc:1'); h.ptcSettle('rc1:ptc:1', false)
+  h.ptcStart('beta', 'rc1:ptc:2'); h.ptcSettle('rc1:ptc:2', true)
+  h.ptcStart('alpha', 'rc1:ptc:3'); h.ptcSettle('rc1:ptc:3', false)
+  h.result('rc1', false)
+
+  const rows = (await h.rpc('usage-list', {})).value.rows
+  const byName = Object.fromEntries(rows.map((r) => [r.name, r]))
+  assert('ptc_transport_not_counted', byName.run_code === undefined, JSON.stringify(Object.keys(byName)))
+  assert('ptc_alpha_two', byName.alpha.count === 2 && byName.alpha.errors === 0, JSON.stringify(byName.alpha))
+  assert('ptc_beta_one_with_error', byName.beta.count === 1 && byName.beta.errors === 1, JSON.stringify(byName.beta))
+
+  // A nested run_code (SDK re-entry) is transport too, never a tool use.
+  h.ptcStart('run_code', 'nested-rc')
+  h.ptcSettle('nested-rc', false)
+  const after = (await h.rpc('usage-list', {})).value.rows
+  assert('nested_run_code_ignored', after.every((r) => r.name !== 'run_code'))
+
+  // Mixed session: native calls and PTC calls accumulate into the same counters.
+  h.call('alpha', 'native1'); h.result('native1', false)
+  const mixed = (await h.rpc('usage-list', {})).value.rows.find((r) => r.name === 'alpha')
+  assert('mixed_native_and_ptc', mixed.count === 3, JSON.stringify(mixed))
 }
 
 // ── 4. unknown endpoint still rejected ─────────────────────────────────────────

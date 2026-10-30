@@ -89,7 +89,11 @@ scope-local 名字把整组（乃至整个隐藏集合）降级成 waterfall 兜
 
 - `tool/call` → 计数 +1（调用已发生即计入，即使结果永远不返回）；
 - `tool/result` 带 `error` 或 `message.isError` → 失败数 +1；
-- 结果事件不带工具名，用 `callId` 与 `tool/call` 配对；对不上号的（fork 重放别家会话的结果）忽略而不是猜测。
+- `tool/ptc-dispatch-start` / `tool/ptc-dispatch` → PTC 程序内部发的子调用，按**真实工具名**计数与判错；
+- 结果事件不带工具名，用 `callId` / `subCallId` 与开始事件配对；对不上号的（fork 重放别家会话的结果）忽略而不是猜测。
+
+**PTC 模式不重复计 `run_code`**：PTC 会话里 `run_code` 是唯一的线上名字，计它会把所有真实调用
+压成一个无意义的数；统计改由其子调用承载（嵌套的 `run_code` 同样跳过）。
 
 写入是防抖的（1.5s 合并一次，temp+rename 原子落盘），统计写失败只 `console.warn`，
 绝不让一个诊断功能打断一轮对话。统计文件损坏时从空计数开始，不影响过滤器加载。
