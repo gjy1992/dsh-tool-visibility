@@ -1170,7 +1170,10 @@ export async function apply(ctx, config = {}) {
           for (const member of group.members) {
             if (hidden.has(member) || seen.has(member)) continue;
             seen.add(member);
-            const intro = firstSentence(group.intro) || firstSentence(described.get(member));
+            // Member's own description only: a group intro describes the group, so
+            // repeating it after every name reads as wrong information. Empty is
+            // better than a line that says nothing about this tool.
+            const intro = firstSentence(described.get(member));
             lines.push(intro.length > 0 ? '- ' + member + ' — ' + intro : '- ' + member);
           }
         }

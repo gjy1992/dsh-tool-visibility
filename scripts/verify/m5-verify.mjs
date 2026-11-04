@@ -1,4 +1,4 @@
-/** M5: disclosed-tools prompt section — per-entry name+intro, intro edits, hidden, dedupe. */
+/** M5: disclosed-tools prompt section — per-entry name + the member's OWN description, hidden, dedupe. */
 import { Context, Service } from 'file:///F:/gitProject/dsh/vendor/cordis/lib/index.js'
 import SystemPrompt from 'file:///F:/gitProject/dsh/packages/core/system-prompt/lib/index.js'
 import ToolRuntime, { defineTool } from 'file:///F:/gitProject/dsh/packages/core/tools/lib/index.js'
@@ -62,12 +62,18 @@ for (const ptc of [false, true]) {
   assert(tag + '_section_before_empty', (await h.section()) === '')
   await h.disclose('group_ga')
   let text = await h.section()
-  assert(tag + '_has_alpha_line', text.includes('- alpha — group a intro'))
+  // First assembly after disclosure may not see member schemas yet: a bare name
+  // (the no-description fallback) is correct there, never the group intro.
+  assert(tag + '_has_alpha_line', text.split('\n').some(l => l.startsWith('- alpha')))
+  assert(tag + '_no_intro_on_name_only_row', !text.includes('group a intro'))
   await h.disclose('group_gb')
   text = await h.section()
   const lines = text.split('\n').filter(l => l.startsWith('- '))
   assert(tag + '_dedupe_alpha_once', lines.filter(l => l.includes('alpha')).length === 1, JSON.stringify(lines))
-  assert(tag + '_has_beta_line', lines.some(l => l.includes('beta') && l.includes('group b intro')))
+  assert(tag + '_has_beta_line', lines.some(l => l.includes('beta') && l.includes('beta tool description')))
+  assert(tag + '_has_alpha_desc', lines.some(l => l.includes('alpha') && l.includes('alpha tool description')))
+  // The group intro must never stand in for a member's description.
+  assert(tag + '_group_intro_not_reused', !text.includes('group a intro') && !text.includes('group b intro'))
   assert(tag + '_messages_unchanged', h.session.appended === 0)
   // intro edit
   await h.rpc('groups-save', { groups: [
@@ -75,7 +81,7 @@ for (const ptc of [false, true]) {
     { key: 'gb', label: 'B', intro: 'group b intro', members: ['alpha', 'beta'], enabled: true },
   ] })
   text = await h.section()
-  assert(tag + '_intro_edit_reflected', text.includes('edited intro for A'))
+  assert(tag + '_intro_edit_not_surfaced', !text.includes('edited intro for A'))
   // hidden member row absent
   await h.rpc('set', { name: 'beta', hidden: true })
   text = await h.section()

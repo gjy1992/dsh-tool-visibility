@@ -185,7 +185,7 @@ MIT
   披露状态只存内存、按 agent scope 隔离，**不写入 state 文件**，新会话/重启回到初始态。
 - **hidden 优先**：hidden 是总开关，成员在 hidden 中时披露后仍不可见。
 - **未归组工具**不受分组影响（始终按 hidden 规则显隐）；`run_code`、`tool_visibility` 既不能入组也不能隐藏。
-- **已披露清单段**：披露后由 system prompt 段 `tool-visibility:disclosed` 输出「名 — 一句话介绍」，不写会话历史。
+- **已披露清单段**：披露后由 system prompt 段 `tool-visibility:disclosed` 输出「名 — 该成员自己的 description 首句」；取不到 description 时只输出名字，不回退组 intro（无信息好过错信息）。不写会话历史。
 - **PTC**：`tools:sdk` 每步按 `view(scope)` 重算，披露后自动包含成员声明（无需 Plan B 纹理裁剪）。
 - **写入语义**：`groups-save` 为原子整体替换；非法 key/重复 key/保留名/`group_*`/跨组引用 fail-closed；未知成员名在保存与加载均被忽略。
 
