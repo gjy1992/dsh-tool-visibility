@@ -36,11 +36,16 @@
  * dynamically as an optional upgrade for scope-aware tool views and degrades
  * to the global registry view when absent.
  *
- * Persistence: the hidden set (plus a description cache for hidden tools) is
- * loaded on start and written on every change to `$DSH_HOME/tool-visibility.json`
- * (override with the `stateFile` config).
+ * Persistence: the hidden set and the groups are loaded on start and written on
+ * every change to the profile's own file, `<profile.dir>/tool-visibility.json`,
+ * so two profiles (web / headless / a test profile) can never overwrite each
+ * other's configuration. A host without a `profileContext` — a bare mount or a
+ * test fixture — falls back to the legacy global `$DSH_HOME/tool-visibility.json`,
+ * and a profile adopts that legacy file once on first start. The `stateFile`
+ * config overrides both. Usage statistics stay installation-global
+ * (`$DSH_HOME/tool-visibility-stats.json`) unless `usageFile` says otherwise.
  */
-import { readFile, writeFile, mkdir, rename, stat } from 'node:fs/promises';
+import { open, readFile, writeFile, mkdir, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -110,10 +115,32 @@ function unrestrictableNames(message) {
   return [...head[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
 }
 
-/** Default state file: $DSH_HOME/tool-visibility.json (fallback ~/.dsh/...). */
-function defaultStateFile() {
-  const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+/** Installation-level dsh home: $DSH_HOME (fallback ~/.dsh/...). Shared by every profile. */
+function dshHome() {
+  const fromEnv = process.env.DSH_HOME;
+  return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : path.join(os.homedir(), '.dsh');
+}
+
+/**
+ * Legacy global state file. Before per-profile state existed, every profile
+ * wrote here, so two running profiles clobbered each other's groups.
+ */
+function legacyStateFile(home) {
   return path.join(home, 'tool-visibility.json');
+}
+
+/**
+ * Default state file. Inside a dsh-launched profile the file lives next to
+ * `cordis.yml`, which keeps profiles isolated by construction; a host without
+ * `profileContext` keeps the legacy global path so bare mounts and fixtures
+ * behave exactly as before.
+ */
+function defaultStateFile(profileContext) {
+  const dir = profileContext && typeof profileContext.dir === 'string' && profileContext.dir.length > 0
+    ? profileContext.dir
+    : null;
+  if (dir === null) return legacyStateFile(dshHome());
+  return path.join(dir, 'tool-visibility.json');
 }
 
 /** RpcResult success/error helpers (dsh-host-apiproxy shape). */
@@ -130,12 +157,34 @@ export async function apply(ctx, config = {}) {
   if (config && config.enabled === false) return;
 
   const systemPrompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined;
-  const stateFile = (config && typeof config.stateFile === 'string' && config.stateFile) || defaultStateFile();
+  /**
+   * The launcher-provided profile facts. `dir` scopes the state file to this
+   * profile; `home` is the installation home every profile shares. Absent in a
+   * bare mount or a test fixture, which therefore keeps the legacy global path.
+   */
+  const profileContext = (() => {
+    if (config && config.profileContext && typeof config.profileContext === 'object') return config.profileContext;
+    if (typeof ctx.get !== 'function') return undefined;
+    try { return ctx.get('profileContext'); } catch { return undefined; }
+  })();
+  const installHome = profileContext && typeof profileContext.home === 'string' && profileContext.home.length > 0
+    ? profileContext.home
+    : dshHome();
+  /** An explicitly configured path wins over the profile default (and disables adoption). */
+  const explicitStateFile = (config && typeof config.stateFile === 'string' && config.stateFile) || null;
+  const stateFile = explicitStateFile || defaultStateFile(profileContext);
   const hidden = new Set();
   const descriptions = new Map();
   let groups = [];
   /** mtime of the state file at the last successful load (external-edit hot reload). */
   let stateFileMtimeMs = 0;
+  /**
+   * The state this process last loaded or wrote: the base of the three-way merge
+   * that keeps a concurrent writer's changes from being overwritten by a stale
+   * in-memory copy.
+   */
+  let baselineHidden = new Set();
+  let baselineGroupsJson = '[]';
   let extraState = {};
   const extraGroupFields = new Map();
   const disclosed = new Map();
@@ -213,6 +262,38 @@ export async function apply(ctx, config = {}) {
   };
 
   // ── persistence ────────────────────────────────────────────────────────────
+  /**
+   * One-shot adoption of the pre-profile state file.
+   *
+   * A dsh build before per-profile state wrote every profile's hidden set and
+   * groups into $DSH_HOME/tool-visibility.json. On the first start with a
+   * profile-scoped path, copy that content over so the upgrade never looks like
+   * "my groups vanished". The legacy file is read, never consumed: another
+   * profile (or an older dsh) may still be running against it.
+   *
+   * Best-effort by design — any failure here leaves the normal load path to
+   * read whatever the profile file already holds.
+   */
+  async function adoptLegacyStateFile() {
+    if (explicitStateFile !== null || profileContext === undefined) return;
+    try { await stat(stateFile); return; } // already adopted, or in use
+    catch { /* absent: maybe adopt */ }
+    let text;
+    try { text = await readFile(legacyStateFile(installHome), 'utf8'); } catch { return; }
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    } catch {
+      return; // never propagate a corrupt legacy file into the profile
+    }
+    try {
+      await mkdir(path.dirname(stateFile), { recursive: true });
+      // 'wx' = exclusive create: when two hosts start at once the first wins and
+      // the second simply loads the file it now finds.
+      await writeFile(stateFile, text, { encoding: 'utf8', flag: 'wx' });
+    } catch { /* EEXIST or unwritable profile dir: load what is there */ }
+  }
+
   async function load() {
     let parsed;
     try {
@@ -242,12 +323,13 @@ export async function apply(ctx, config = {}) {
       if (key === 'hidden' || key === 'descriptions' || key === 'groups') continue;
       extraState[key] = value;
     }
+    markBaseline();
   }
 
   /**
    * Pick up an externally edited state file (mtime moved since the last load).
-   * Without this, editing $DSH_HOME/tool-visibility.json by hand would only take
-   * effect after a restart, and the next in-process write would clobber it.
+   * Without this, editing the state file by hand would only take effect after a
+   * restart, and the next in-process write would clobber it.
    * Invalid/partially written files are ignored: the current configuration stays.
    */
   async function reloadStateIfChanged(force = false) {
@@ -284,37 +366,322 @@ export async function apply(ctx, config = {}) {
       }
       applyFilter();
     }
+    // The adopted file is the new merge base: without this the next three-way
+    // merge would resurrect names deleted by the external edit.
+    markBaseline();
+  }
+
+  // ── cross-process state lock ───────────────────────────────────────────────
+  //
+  // A per-profile file removed the everyday clash (two profiles, one file), but a
+  // second instance of the same profile — or a host plus a hand editor — can still
+  // rewrite the file between our read and our write. Every read-merge-write
+  // therefore runs under `<stateFile>.lock`:
+  //
+  //  - `wx` create = exclusive; the file carries pid/host/nonce so a dead owner
+  //    can be recognised and replaced;
+  //  - the lock lives for one merge+write (milliseconds). It is never held across
+  //    an RPC round-trip, a model step, or the plugin lifetime;
+  //  - a live owner is waited on for LOCK_TIMEOUT_MS and then reported as a write
+  //    failure: refusing to write beats a silent lost update;
+  //  - a dead owner (process gone, or a foreign host's lock older than
+  //    LOCK_STALE_MS) is replaced by renaming the lock aside, which exactly one
+  //    contender can win.
+  const LOCK_SUFFIX = '.lock';
+  const LOCK_TIMEOUT_MS = 2000;
+  const LOCK_STALE_MS = 30000;
+  const LOCK_RETRY_MIN_MS = 20;
+  const LOCK_RETRY_JITTER_MS = 30;
+  const HOSTNAME = os.hostname();
+  const lockFile = stateFile + LOCK_SUFFIX;
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /** Collision-free token for one lock acquisition and one temp file. */
+  function uniqueToken() {
+    return [HOSTNAME, process.pid, Date.now().toString(36), Math.random().toString(36).slice(2, 10)].join('-');
+  }
+
+  /** Read a lock file; null when it is gone, unreadable or malformed. */
+  async function readLock() {
+    try {
+      const parsed = JSON.parse(await readFile(lockFile, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Whether the process recorded in a lock still exists (EPERM = exists). */
+  function ownerAlive(entry) {
+    const pid = entry && entry.pid;
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error !== null && typeof error === 'object' && error.code === 'EPERM';
+    }
   }
 
   /**
-   * Atomic, serialized write. Every writer (hidden/show/reset/groups-save) goes
-   * through this one path so a concurrent writer can never drop the groups
-   * field, and a crash can never leave a half-written state file.
+   * Take over a lock whose owner is gone. Renaming (never deleting) is what makes
+   * this safe: exactly one contender wins the rename; everyone else simply retries
+   * the ordinary acquisition path.
+   * @returns whether the caller should retry acquisition immediately.
    */
-  function persist() {
+  async function breakStaleLock() {
+    let info;
+    try {
+      info = await stat(lockFile);
+    } catch {
+      return true; // released on its own
+    }
+    const entry = await readLock();
+    const ageMs = Date.now() - info.mtimeMs;
+    // A lock whose body is unreadable may be one that was created microseconds
+    // ago and is still being written, so absence of a pid is NOT proof of death:
+    // only age is. A readable local pid can be checked directly; a foreign host's
+    // process is uncheckable, and there only age can decide.
+    const localOwner = entry !== null && (typeof entry.hostname !== 'string' || entry.hostname === HOSTNAME);
+    const stale = localOwner ? !ownerAlive(entry) : ageMs >= LOCK_STALE_MS;
+    if (!stale) return false;
+    const aside = lockFile + '.stale-' + uniqueToken();
+    try {
+      await rename(lockFile, aside);
+    } catch {
+      return true; // another contender won the takeover, or the owner released
+    }
+    try { await unlink(aside); } catch { /* best effort */ }
+    console.warn('[' + name + '] took over a stale state lock ('
+      + (entry === null ? 'unreadable' : entry.pid + '@' + entry.hostname) + ')');
+    return true;
+  }
+
+  /**
+   * Acquire the state lock.
+   * @returns a release function, or null when a live process held it for the whole
+   *   LOCK_TIMEOUT_MS window (the caller must not write).
+   */
+  async function acquireStateLock() {
+    await mkdir(path.dirname(lockFile), { recursive: true });
+    const token = uniqueToken();
+    const body = JSON.stringify({ pid: process.pid, hostname: HOSTNAME, nonce: token, startedAt: new Date().toISOString() });
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    for (;;) {
+      let handle = null;
+      try {
+        handle = await open(lockFile, 'wx');
+        try {
+          await handle.writeFile(body, 'utf8');
+          await handle.sync();
+        } catch { /* the lock exists; its content is diagnostic only */ }
+        await handle.close();
+        handle = null;
+        return async () => { await releaseStateLock(token); };
+      } catch (error) {
+        if (handle !== null) { try { await handle.close(); } catch { /* ignore */ } }
+        if (!error || error.code !== 'EEXIST') throw error;
+      }
+      if (await breakStaleLock()) continue;
+      if (Date.now() >= deadline) return null;
+      await delay(LOCK_RETRY_MIN_MS + Math.floor(Math.random() * LOCK_RETRY_JITTER_MS));
+    }
+  }
+
+  /**
+   * Release only a lock we still own. After a stale takeover our own file was
+   * renamed away and the current lock belongs to someone else — deleting that
+   * would hand two writers the same critical section.
+   */
+  async function releaseStateLock(token) {
+    const entry = await readLock();
+    if (entry !== null && entry.nonce !== token) {
+      console.warn('[' + name + '] the state lock was taken over while held; leaving the new owner alone');
+      return;
+    }
+    try { await unlink(lockFile); } catch { /* already gone */ }
+  }
+
+  // ── read-merge-write ───────────────────────────────────────────────────────
+  /** The fields this plugin owns, in a stable serialization for equality checks. */
+  function canonicalGroups(list) {
+    return JSON.stringify((Array.isArray(list) ? list : []).map((group) => ({
+      key: group.key,
+      label: group.label,
+      intro: group.intro,
+      members: [...group.members],
+      enabled: group.enabled !== false,
+    })));
+  }
+
+  /** Record the state just loaded or written as the next merge base. */
+  function markBaseline() {
+    baselineHidden = new Set(hidden);
+    baselineGroupsJson = canonicalGroups(groups);
+  }
+
+  /** The current file, parsed; null when absent, unreadable or not an object. */
+  async function readDiskState() {
+    try {
+      const parsed = JSON.parse(await readFile(stateFile, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Hidden names of a parsed file, with reserved names dropped defensively. */
+  function parseHidden(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((entry) => typeof entry === 'string' && !RESERVED_TOOLS.has(entry));
+  }
+
+  /**
+   * Three-way merge of the hidden set: ours against the file, over the base we
+   * last loaded or wrote. Names we added survive, names we removed stay removed,
+   * and names the other writer added are kept — a plain overwrite would turn
+   * either process's toggle into a no-op or a resurrection.
+   */
+  function mergeHidden(diskHidden) {
+    const disk = new Set(diskHidden);
+    const ours = new Set(hidden);
+    const removedByUs = new Set([...baselineHidden].filter((entry) => !ours.has(entry)));
+    const result = new Set([...disk].filter((entry) => !removedByUs.has(entry)));
+    for (const entry of ours) result.add(entry);
+    return [...result].sort();
+  }
+
+  /** Description cache: union, with this process's values winning per key. */
+  function mergeDescriptions(diskRaw) {
+    const result = new Map();
+    if (diskRaw && typeof diskRaw === 'object' && !Array.isArray(diskRaw)) {
+      for (const [key, value] of Object.entries(diskRaw)) if (typeof value === 'string') result.set(key, value);
+    }
+    for (const [key, value] of descriptions) result.set(key, value);
+    return result;
+  }
+
+  /** Unknown top-level keys of a parsed file (another writer may own them). */
+  function unknownKeysOf(parsed) {
+    const result = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (key === 'hidden' || key === 'descriptions' || key === 'groups') continue;
+      result[key] = value;
+    }
+    return result;
+  }
+
+  /**
+   * Which groups the file should end up with.
+   *
+   * - a saved group configuration (`intent === 'groups'`) is authoritative: the
+   *   user just decided it in this process;
+   * - any other write adopts the file's groups when they moved since our
+   *   baseline, so a settings-page save from another instance is never reverted
+   *   by a tool toggle here;
+   * - absent or invalid groups in the file leave ours untouched.
+   */
+  function mergeGroups(diskRaw, intent) {
+    if (!Array.isArray(diskRaw)) return { chosen: groups, adopted: false };
+    const disk = normalizeGroups(diskRaw, true);
+    if (validateGroups(disk, true) !== null) return { chosen: groups, adopted: false };
+    if (intent === 'groups') return { chosen: groups, adopted: false };
+    const diskJson = canonicalGroups(disk);
+    if (diskJson === baselineGroupsJson || diskJson === canonicalGroups(groups)) {
+      return { chosen: groups, adopted: false };
+    }
+    return { chosen: disk, adopted: true };
+  }
+
+  /** On-disk shape of the merged values (unknown keys first, as before). */
+  function composeState(hiddenList, descriptionsMap, groupList, unknown) {
+    const state = { ...unknown, hidden: [...hiddenList].sort() };
+    if (descriptionsMap.size > 0) {
+      state.descriptions = Object.fromEntries([...descriptionsMap.entries()].sort());
+    }
+    state.groups = groupList.map((group) => ({
+      ...(extraGroupFields.get(group.key) ?? {}),
+      key: group.key,
+      label: group.label,
+      intro: group.intro,
+      members: [...group.members],
+      enabled: group.enabled,
+    }));
+    return state;
+  }
+
+  /**
+   * Atomic, serialized, merge-aware write. Every writer (hidden/show/reset/
+   * groups-save) goes through this one path: in-process calls are chained, the
+   * cross-process lock covers one read-merge-write, and a crash can never leave a
+   * half-written state file (temp + rename).
+   * @param intent the field this write is authoritative for: `'groups'` after an
+   *   explicit group save, `'hidden'` for every hide/show/reset.
+   */
+  function persist(intent = 'hidden') {
     const run = async () => {
       await mkdir(path.dirname(stateFile), { recursive: true });
-      const state = { ...extraState, hidden: [...hidden].sort() };
-      if (descriptions.size > 0) {
-        state.descriptions = Object.fromEntries([...descriptions.entries()].sort());
+      const release = await acquireStateLock();
+      if (release === null) {
+        throw new Error('the state file is locked by another process (waited '
+          + LOCK_TIMEOUT_MS + 'ms); nothing was written');
       }
-      state.groups = groups.map((group) => ({
-        ...(extraGroupFields.get(group.key) ?? {}),
-        key: group.key,
-        label: group.label,
-        intro: group.intro,
-        members: [...group.members],
-        enabled: group.enabled,
-      }));
-      const temp = stateFile + '.tmp-' + process.pid;
-      await writeFile(temp, JSON.stringify(state, null, 2) + '\n', 'utf8');
-      await rename(temp, stateFile);
-      // Our own write is the new baseline: the next read must not treat it as
-      // an external edit and re-apply the same configuration.
       try {
-        const info = await stat(stateFile);
-        if (typeof info.mtimeMs === 'number') stateFileMtimeMs = info.mtimeMs;
-      } catch { /* best effort */ }
+        const disk = await readDiskState();
+        const beforeHiddenJson = JSON.stringify([...hidden].sort());
+        const extrasBefore = new Map(extraGroupFields);
+
+        const hiddenAfter = disk === null ? [...hidden].sort() : mergeHidden(parseHidden(disk.hidden));
+        const descriptionsAfter = disk === null ? new Map(descriptions) : mergeDescriptions(disk.descriptions);
+        // The cache exists to describe *hidden* tools; keeping entries for tools
+        // the merge just unhid would resurrect a reset's cleared cache.
+        const hiddenAfterSet = new Set(hiddenAfter);
+        for (const key of [...descriptionsAfter.keys()]) {
+          if (!hiddenAfterSet.has(key)) descriptionsAfter.delete(key);
+        }
+        const groupsAfter = disk === null ? { chosen: groups, adopted: false } : mergeGroups(disk.groups, intent);
+        // normalizeGroups() records unknown per-group fields as a side effect;
+        // discard what the file said about groups we are not adopting.
+        if (!groupsAfter.adopted) {
+          extraGroupFields.clear();
+          for (const [key, value] of extrasBefore) extraGroupFields.set(key, value);
+        }
+        const unknownAfter = disk === null ? { ...extraState } : { ...extraState, ...unknownKeysOf(disk) };
+
+        // Install the merged view before writing, so memory, registrations and
+        // the file can never disagree after a successful write.
+        hidden.clear();
+        for (const entry of hiddenAfter) hidden.add(entry);
+        descriptions.clear();
+        for (const [key, value] of descriptionsAfter) descriptions.set(key, value);
+        if (groupsAfter.adopted) {
+          groups = groupsAfter.chosen;
+          applyGroups();
+        }
+        extraState = unknownAfter;
+
+        const state = composeState(hiddenAfter, descriptionsAfter, groupsAfter.chosen, unknownAfter);
+        const temp = stateFile + '.tmp-' + uniqueToken();
+        try {
+          await writeFile(temp, JSON.stringify(state, null, 2) + '\n', 'utf8');
+          await rename(temp, stateFile);
+        } catch (error) {
+          try { await unlink(temp); } catch { /* never mask the real failure */ }
+          throw error;
+        }
+        markBaseline();
+        // The merged hidden set may differ from what this process had applied
+        // (a tool hidden elsewhere, or one we just unhid while merging).
+        if (JSON.stringify([...hidden].sort()) !== beforeHiddenJson) applyFilter();
+        // Our own write is the new baseline: the next read must not treat it as
+        // an external edit and re-apply the same configuration.
+        try {
+          const info = await stat(stateFile);
+          if (typeof info.mtimeMs === 'number') stateFileMtimeMs = info.mtimeMs;
+        } catch { /* best effort */ }
+      } finally {
+        await release();
+      }
     };
     // Chain regardless of the previous outcome: one failed write must not wedge the queue.
     const next = writeChain.then(run, run);
@@ -337,8 +704,15 @@ export async function apply(ctx, config = {}) {
   // Counts live in their own file so 全部恢复 (which rewrites the hidden set and
   // the groups) can never take the history with it, and so wiping the counts
   // (统计页的重置按钮) never touches the filter configuration.
+  /**
+   * Usage statistics answer "which tools do I actually call", a fact about the
+   * installation rather than about one profile, so the counters stay in the
+   * shared home and switching profiles does not reset the history. An explicit
+   * `stateFile` keeps the documented "next to the state file" locality (custom
+   * setups and fixtures expect it); `usageFile` overrides both.
+   */
   const usageFile = (config && typeof config.usageFile === 'string' && config.usageFile)
-    || path.join(path.dirname(stateFile), 'tool-visibility-stats.json');
+    || path.join(explicitStateFile === null ? installHome : path.dirname(stateFile), 'tool-visibility-stats.json');
   /** tool name → { count, errors, firstUsedAt, lastUsedAt } */
   const usage = new Map();
   /** callId → { name, at } for calls whose result has not arrived yet. */
@@ -379,7 +753,11 @@ export async function apply(ctx, config = {}) {
       const tools = {};
       for (const toolName of [...usage.keys()].sort()) tools[toolName] = usage.get(toolName);
       const body = { version: 1, updatedAt: new Date().toISOString(), tools };
-      const temp = usageFile + '.tmp-' + process.pid;
+      // Host-qualified temp name: two installations can share a pid, and a shared
+      // temp path would let one host rename the other's half-written file.
+      // Statistics are diagnostics, so the whole-file last-writer-wins is accepted
+      // here (unlike the state file, they are not merged under the lock).
+      const temp = usageFile + '.tmp-' + uniqueToken();
       await writeFile(temp, JSON.stringify(body, null, 2) + '\n', 'utf8');
       await rename(temp, usageFile);
     };
@@ -1066,7 +1444,9 @@ export async function apply(ctx, config = {}) {
         groups = next;
         try {
           applyGroups();
-          await persist();
+          // An explicit save is authoritative for the groups field; the hidden
+          // set is still merged with whatever another instance wrote.
+          await persist('groups');
         } catch (error) {
           // Roll back the in-memory configuration and the registrations together:
           // a failed apply/write must not leave runtime state ahead of the file.
@@ -1376,6 +1756,7 @@ export async function apply(ctx, config = {}) {
   });
 
   // ── start with persisted state ─────────────────────────────────────────────
+  await adoptLegacyStateFile();
   await load();
   // Statistics are a separate file and a separate failure domain: a corrupt or
   // unwritable stats file must never stop the filter from loading.

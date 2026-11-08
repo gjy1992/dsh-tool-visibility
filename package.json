@@ -1,6 +1,6 @@
 {
   "name": "@rayfalling/dsh-tool-visibility",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Control which tool schemas are injected into the DeepSeek Harness model context, with user-defined tool groups for progressive disclosure: each enabled group exposes exactly one group_<key> tool (its description IS the group intro), and calling it discloses the group's tools to that session only. Settings-page UI + tool_visibility manager tool; persisted state; framework-native tools.restrict filter.",
   "type": "module",
   "main": "src/index.js",

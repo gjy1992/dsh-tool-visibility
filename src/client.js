@@ -152,8 +152,8 @@ window.__ModuleLoader__.load({
         const refresh = useCallback(async () => {
           try {
             setError(null);
-            // reload:true asks the Host to re-read $DSH_HOME/tool-visibility.json,
-            // so 刷新 picks up a file edited by hand (or by another process).
+            // reload:true asks the Host to re-read its state file (profile-scoped
+            // since 0.7.0), so 刷新 picks up a file edited by hand or another process.
             setData(await call('list', { reload: true }));
             const listed = await call('groups-list', {});
             setGroupConfigs(Array.isArray(listed.groups) ? listed.groups : []);

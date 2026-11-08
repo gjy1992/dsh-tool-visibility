@@ -353,3 +353,28 @@ AC1 PASS
 ```
 
 至此 M6 的「中间回归」由本节最终 AC1 结果取代。
+## M10 / M11（0.7.0：状态文件按 profile 隔离 + 跨进程文件锁）
+
+```
+$ node scripts/verify/m10-profile-state.mjs
+profile_default_path=true <profile.dir>/tool-visibility.json
+adopted_file_created=true / adopted_content_identical=true / legacy_file_kept=true
+existing_profile_file_kept=true / no_profile_uses_legacy_path=true
+explicit_state_file_wins=true / corrupt_legacy_not_copied=true
+M10 PASS
+```
+
+```
+$ node scripts/verify/m11-concurrency.mjs
+hide_race_both_survive=true ["alpha","beta"]
+groups_and_hide_both_survive=true ["beta"]
+groups_save_survived=true [{"key":"ga",...,"intro":"intro A v2",...}]
+no_lock_left=true / no_temp_left=true
+stale_lock_taken_over=true / stale_lock_write_applied=true
+busy_lock_refused=true "persist failed: the state file is locked by another process (waited 2000ms); nothing was written"
+busy_lock_file_untouched=true / busy_lock_kept_owners_lock=true
+aged_empty_lock_reclaimed=true / fresh_empty_lock_respected=true
+M11 PASS
+```
+
+回归：ac1/ac3–ac8、m1-acceptance/m1-checklist/m1-judged/m2–m7/m9 全部 EXIT=0。

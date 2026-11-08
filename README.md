@@ -113,14 +113,22 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
 
 ## 持久化
 
-默认 `$DSH_HOME/tool-visibility.json`（`~/.dsh/tool-visibility.json`），每次
-`hide/show/reset` 后写盘，启动时加载。格式：
+默认写在**当前 profile 目录**下：`<profile.dir>/tool-visibility.json`（与
+`cordis.yml` 同层，web / headless / 自建 profile 各一份，互不覆盖）。没有
+`profileContext` 的宿主（裸挂载、测试夹具）退回旧的全局
+`$DSH_HOME/tool-visibility.json`（`~/.dsh/tool-visibility.json`）。
+
+升级迁移：profile 文件不存在而旧的全局文件存在时，首次启动把它**复制**一份到
+profile 目录（旧文件保留不动，老版本 dsh 仍可继续读）。每次 `hide/show/reset`
+/ 分组保存后写盘，启动时加载。格式：
 
 ```json
 { "hidden": ["import_claude", "store_search"], "descriptions": { "import_claude": "…" } }
 ```
 
-使用统计默认落在同目录的 `tool-visibility-stats.json`：
+使用统计是"这套安装用过哪些工具"，默认落在**安装级**目录的
+`$DSH_HOME/tool-visibility-stats.json`，不随 profile 走（切 profile 不会清空历史）；
+显式配置了 `stateFile` 时仍按其所在目录存放。格式：
 
 ```json
 { "version": 1, "updatedAt": "2026-10-29T03:26:57.820Z", "tools": { "read": { "count": 12, "errors": 0, "firstUsedAt": "…", "lastUsedAt": "…" } } }
@@ -133,8 +141,34 @@ Client 半区由 web 端 `dsh.client` 表自动发现（`package.json` 的 `dsh.
   name: '@rayfalling/dsh-tool-visibility'
   config:
     stateFile: 'F:/my/state.json'
-    usageFile: 'F:/my/tool-usage.json'   # 可选，默认与 stateFile 同目录
+    usageFile: 'F:/my/tool-usage.json'   # 可选，默认 $DSH_HOME/tool-visibility-stats.json（显式 stateFile 时与其同目录）
 ```
+### 并发写：文件锁 + 三路合并
+
+同一个 state 文件可能被两个宿主实例（同一 profile 开两次、宿主 + 手编辑器）同时写，
+所以每次「读—合并—写」都在 `<stateFile>.lock` 下完成：
+
+- 获取：`wx` 独占创建，内容 `{pid, hostname, nonce, startedAt}`；被占用时 20–50ms 轮询，
+  最多等 2s。超时**不写**，返回 `persist failed: the state file is locked by another process`（宁可不落盘也不丢更新）。
+- stale 接管：本地 pid 已消失 → 直接接管；锁内容读不出来（可能正在创建）或属其他主机
+  → 只有锁龄 ≥30s 才判定 stale。接管用 `rename` 把旧锁挪开，只有一个竞争者能成功。
+- 释放：`rename(tmp → stateFile)` 成功后**立即** `unlink`；异常路径由 try/finally 兜底；
+  等待超时路径从未持有。锁只覆盖一次合并+写（毫秒级），**不跨** RPC 往返、模型步或插件
+  生命周期；进程被杀则靠 stale 规则在 30s 内被下一个写者接管。
+- 释放前校验 nonce：若锁已被别人接管（自己超长持锁），不删别人的锁，只记一条 warn。
+
+锁内做三路合并（base = 本进程上次加载/写入的状态，ours = 内存，theirs = 盘上）：
+
+| 字段 | 合并规则 |
+| --- | --- |
+| `hidden` | 我们新增的保留、我们删除的保持删除、对方新增的也保留（否则任一方的开关会变成 no-op 或“复活”） |
+| `groups` | 显式保存分组（`groups-save`）以本进程为准；其它写（hide/show/reset）在盘上分组自 base 变动过时**采纳盘上分组**，不会回滚别的实例刚保存的配置 |
+| `descriptions` | 取并集、本进程值优先，并裁剪到最终 hidden 集合内 |
+| 未知顶层键 / 未知组字段 | 保留（另一个写者可能拥有它们），盘上新值优先 |
+
+使用统计文件**不参与**加锁与合并：它是诊断数据，跨主机整体 last-writer-wins 可接受；
+临时文件名带主机名+pid+随机串，避免两个同 pid 的宿主互相 rename 对方的半成品。
+
 
 ## 兼容性
 
