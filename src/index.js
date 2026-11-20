@@ -1216,7 +1216,11 @@ export async function apply(ctx, config = {}) {
     const result = await next();
     return {
       ...result,
-      tools: result.tools.filter((tool) => !hidden.has(tool.name) || RESERVED_TOOLS.has(tool.name)),
+      // dsh 0.2.2 moved tool description into the tool executor, so an assembly
+      // may carry no tools at all; narrowing is then the executor's job.
+      tools: Array.isArray(result.tools)
+        ? result.tools.filter((tool) => !hidden.has(tool.name) || RESERVED_TOOLS.has(tool.name))
+        : result.tools,
     };
   };
   const ensureWaterfall = () => {
